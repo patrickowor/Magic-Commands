@@ -1,5 +1,5 @@
 import os 
-
+from uuid import uuid4
 BASE_DIR = __file__.replace("sqlmodelManager.py", "")
 app_folder = os.path.join(BASE_DIR, "app")
 installer = ""
@@ -22,13 +22,13 @@ from fastapi import HTTPException, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from passlib.context import CryptContext
 from datetime import datetime, timedelta
-
+import os
 MINUTES = 30 
 
 class AuthHandler():
     security = HTTPBearer()
     pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-    secret = 'SECRET'
+    secret = os.environ.get("SECRET")
 
     def get_password_hash(self, password):
         return self.pwd_context.hash(password)
@@ -72,7 +72,8 @@ def protected(username=Depends(auth_handler.auth_wrapper)):
 ''')
 
     with open(os.path.join(BASE_DIR, ".env"), "w") as envFile:
-        envFile.write(f"""DATABASE_URL = {database_url}""")
+        envFile.write(f"""DATABASE_URL = {database_url}
+SECRET = {str(uuid4())}""")
 
     with open(os.path.join(app_folder, "models.py"), "w") as modelFile:
         modelFile.write("""from sqlmodel import SQLModel, Field
@@ -136,6 +137,7 @@ Create Date: ${create_date}
 """
 from alembic import op
 import sqlalchemy as sa
+import sqlmodel
 ${imports if imports else ""}
 
 # revision identifiers, used by Alembic.
