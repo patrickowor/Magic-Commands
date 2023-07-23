@@ -138,6 +138,7 @@ Create Date: ${create_date}
 from alembic import op
 import sqlalchemy as sa
 import sqlmodel
+import sqlalchemy_utils
 ${imports if imports else ""}
 
 # revision identifiers, used by Alembic.
@@ -264,7 +265,7 @@ datefmt = %H:%M:%S''')
     with open(os.path.join(BASE_DIR, "migrations", "env.py"), "w") as envFile:
         envFile.write('''import asyncio
 from logging.config import fileConfig
-
+from logging import Logger
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
@@ -291,6 +292,33 @@ target_metadata = SQLModel.metadata
 # my_important_option = config.get_main_option("my_important_option")
 # ... etc.
 
+# https://alembic.sqlalchemy.org/en/latest/autogenerate.html#affecting-the-rendering-of-types-themselves
+def render_item(type_, obj, autogen_context):
+    """Apply rendering for custom sqlalchemy types"""
+    if type_ == "type":
+        module_name =  obj.__class__.__module__
+        if module_name.startswith("sqlalchemy_utils."):
+            return render_sqlalchemy_utils_type(obj, autogen_context)
+
+    # render default
+    return False
+
+def render_sqlalchemy_utils_type(obj, autogen_context):
+    class_name = obj.__class__.__name__
+    import_statement = f"from sqlalchemy_utils.types import {class_name}"
+    autogen_context.imports.add(import_statement)
+    if class_name == 'ChoiceType':
+        return render_choice_type(obj, autogen_context)
+    return f"{class_name}()"
+
+def render_choice_type(obj, autogen_context):
+    choices = obj.choices
+    if obj.type_impl.__class__.__name__ == 'EnumTypeImpl':
+        choices = obj.type_impl.enum_class.__name__
+        import_statement = f"from app.models import {choices}"
+        autogen_context.imports.add(import_statement)
+    impl_stmt = f"sa.{obj.impl.__class__.__name__}()"
+    return f"{obj.__class__.__name__}(choices={choices}, impl={impl_stmt})"
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
@@ -317,7 +345,17 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    def process_revision_directives(context, revision, directives):
+        if getattr(config.cmd_opts, 'autogenerate', False):
+            script = directives[0]
+            if script.upgrade_ops.is_empty():
+                directives[:] = []
+                print('No changes in schema detected.')
+    context.configure(connection=connection, 
+            target_metadata=target_metadata,
+            process_revision_directives=process_revision_directives,
+            render_item=render_item,
+        )
 
     with context.begin_transaction():
         context.run_migrations()
@@ -334,6 +372,7 @@ async def run_async_migrations() -> None:
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
+
 
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
